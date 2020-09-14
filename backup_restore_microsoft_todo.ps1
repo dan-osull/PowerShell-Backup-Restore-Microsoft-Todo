@@ -35,7 +35,7 @@ Function Export-MicrosoftTodo {
             # so we're using an alternative parser and storing the JSON as a string
             # https://stackoverflow.com/a/58169326/12055271
             $json = [Newtonsoft.Json.JsonConvert]::DeserializeObject($response.Content)
-            ForEach ($task in $json.value) {
+            foreach ($task in $json.value) {
                 # Don't need ID - Graph API can generate a new one
                 $task.Remove("id") | Out-Null
                 # Don't need ETag
@@ -88,7 +88,7 @@ Function Import-MicrosoftTodo {
     "Restoring to user: $($me.displayName) / $($me.userPrincipalName)"
 
     # Old school. Should use ConfirmPreference etc.
-    $confirm = read-host "Continue? (Y/N)"
+    $confirm = Read-Host "Continue? (Y/N)"
     if ($confirm -ne "y") {
         "Exiting."
         break
@@ -162,5 +162,3 @@ Function Import-MicrosoftTodo {
     #endregion
     "Finished!"
 }
-
-Import-MicrosoftTodo
