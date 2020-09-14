@@ -1,19 +1,13 @@
-
-# Based on:
-# https://gotoguy.blog/2020/05/06/oauth-authentication-to-microsoft-graph-with-powershell-core/
-
-# Login Graph Explorer:
-# Click "Select permissions" cog icon next to your username
-# Search for "Tasks." and grant yourself all permissions
-# Click "Access token" and copy the token
-
-$graphBaseUri = "https://graph.microsoft.com/beta"
-$ErrorActionPreference = "Stop"
-
 Function Export-MicrosoftTodo {
     param(
         $exportFilename = "microsoft_todo_backup.xml"
     )
+    $ErrorActionPreference = "Stop"
+    # Disabling Progress Bar for better Invoke-WebRequest performance
+    $ProgressPreference = 'SilentlyContinue'
+    $graphBaseUri = "https://graph.microsoft.com/beta"
+
+    # Ask for token
     $accessToken = Read-Host -AsSecureString -Prompt "Paste OAuth2 Token"
 
     # User information
@@ -73,20 +67,32 @@ Function Export-MicrosoftTodo {
     } | Export-Clixml -Path $exportFilename -Verbose
 }
 
+
 Function Import-MicrosoftTodo {
     param(
         $importFilename = "microsoft_todo_backup.xml"
     )
+    $ErrorActionPreference = "Stop"
+    $graphBaseUri = "https://graph.microsoft.com/beta"
+
+    # Load XML and ask for token
     $sourceData = Import-Clixml -Path $importFilename
     $accessToken = Read-Host -AsSecureString -Prompt "Paste OAuth2 Token"
 
-    "Loaded $importFilename"
-    $sourceData.about | Format-List
+    "Loaded $importFilename. Backup details:"
     "List count: $($sourceData.lists.Count)"
     "Task count: $($sourceData.tasks.tasks.Count)"
-    ""
+    $sourceData.about | Format-List
+
     $me = Invoke-RestMethod -Uri ($graphBaseUri + "/me") -Authentication OAuth -Token $accessToken
     "Restoring to user: $($me.displayName) / $($me.userPrincipalName)"
+
+    # Old school. Should use ConfirmPreference etc.
+    $confirm = read-host "Continue? (Y/N)"
+    if ($confirm -ne "y") {
+        "Exiting."
+        break
+    }
 
     #region Create any missing lists in target account
     $targetLists = Invoke-RestMethod -Uri ($graphBaseUri + "/me/todo/lists") -Authentication OAuth -Token $accessToken | 
@@ -99,7 +105,7 @@ Function Import-MicrosoftTodo {
 
     if ($toCreate) {
         foreach ($list in $toCreate) {
-            # https://docs.microsoft.com/en-us/graph/api/todo-post-lists
+            # Create todoTaskList - https://docs.microsoft.com/en-us/graph/api/todo-post-lists
             $params = @{
                 "Method"         = "Post"
                 "Uri"            = ($graphBaseUri + "/me/todo/lists")
@@ -119,11 +125,12 @@ Function Import-MicrosoftTodo {
     }
     ""
     #endregion
-    
+
     #region Add tasks
     foreach ($group in $sourceData.tasks) {
-        # Lookup displayName from source XML
-        $listDisplayName = $sourceData.lists | Where-Object { $_.id -eq $group.list_id } | 
+        # XML tasks are grouped by list
+        # Lookup displayName. Important that this is case sensitive
+        $listDisplayName = $sourceData.lists | Where-Object { $_.id -ceq $group.list_id } | 
             Select-Object -ExpandProperty displayName
         "Processing list: $listDisplayName..."
         $taskCount = $group.tasks.Count
@@ -134,24 +141,26 @@ Function Import-MicrosoftTodo {
         $i = 0
         foreach ($task in $group.tasks) {
             $i++
-            Write-Progress -Activity "Adding tasks to $listDisplayName" -CurrentOperation ($task | ConvertFrom-Json).title -PercentComplete ($i / $taskCount * 100)
-            # Add task. Nested for loops go brrr...
-            # https://docs.microsoft.com/en-us/graph/api/todotasklist-post-tasks
+            $progressTask = ($task | ConvertFrom-Json).title
+            Write-Progress -Activity "Adding tasks to $listDisplayName" -CurrentOperation $progressTask -PercentComplete ($i / $taskCount * 100)
+            # Create todoTask - https://docs.microsoft.com/en-us/graph/api/todotasklist-post-tasks
+            # Nested for loops go brrr...
             $params = @{
                 # POST /me/todo/lists/{todoTaskListId}/tasks
-                "Method"         = "Post"
-                "Uri"            = ($graphBaseUri + "/me/todo/lists/" + $targetListId + "/tasks")
-                "Authentication" = "OAuth"
-                "Token"          = $accessToken
-                "Body"           = $task
-                "ContentType"    = "application/json; charset=utf-8"
+                "Method"            = "Post"
+                "Uri"               = ($graphBaseUri + "/me/todo/lists/" + $targetListId + "/tasks")
+                "Authentication"    = "OAuth"
+                "Token"             = $accessToken
+                "Body"              = $task
+                "ContentType"       = "application/json; charset=utf-8"
+                "MaximumRetryCount" = 2
+                "RetryIntervalSec"  = 5
             }
             Invoke-RestMethod @params | Out-Null
         }
     }
     #endregion
-    "Finished."
+    "Finished!"
 }
 
-#Export-MicrosoftTodo
 Import-MicrosoftTodo
